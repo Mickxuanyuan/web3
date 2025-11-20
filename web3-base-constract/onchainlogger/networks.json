@@ -1,0 +1,8 @@
+{
+  "sepolia": {
+    "OnChainLogger": {
+      "address": "0xD52D7380fD86c8D73d23b941ef3C0C7DA073478d",
+      "startBlock": 9666125
+    }
+  }
+}

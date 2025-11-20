@@ -1,0 +1,26 @@
+specVersion: 1.3.0
+indexerHints:
+  prune: auto
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum
+    name: OnChainLogger
+    network: sepolia
+    source:
+      address: "0xD52D7380fD86c8D73d23b941ef3C0C7DA073478d"
+      abi: OnChainLogger
+      startBlock: 9666125
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - DataLogged
+      abis:
+        - name: OnChainLogger
+          file: ./abis/OnChainLogger.json
+      eventHandlers:
+        - event: DataLogged(indexed address,string,string,uint256)
+          handler: handleDataLogged
+      file: ./src/on-chain-logger.ts
