@@ -1,7 +1,7 @@
 "use client";
 
 // 引入 React 钩子与 RainbowKit 连接按钮
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 // ethers 负责链上请求与数据格式化
 import { Eip1193Provider, JsonRpcProvider, formatEther } from "ethers";
@@ -15,6 +15,7 @@ import {
   useTransactionLookup,
 } from "@/app/store/useWeb3Store";
 import { RPC_URL } from "@/lib/config";
+import { useAccount, useWalletClient } from "wagmi";
 
 // 统一封装 window.ethereum 的事件类型，便于在 React 中监听
 type EthereumProvider = Eip1193Provider & {
@@ -25,68 +26,28 @@ type EthereumProvider = Eip1193Provider & {
 const fallbackProvider = new JsonRpcProvider(RPC_URL);
 
 export default function Home() {
-  // connectedAddress 用于控制写日志区域以及 UI 展示
-  const [connectedAddress, setConnectedAddress] = useState<string | null>(null);
-  // walletClient 直接持有浏览器注入的 EIP-1193 provider 供 ethers 使用
-  const [walletClient, setWalletClient] = useState<EthereumProvider | null>(null);
+  const { address: wagmiAddress } = useAccount();
+  const { data: wagmiWalletClient } = useWalletClient();
 
-  // 在客户端挂载时读取 window.ethereum，并监听账户/断开事件
-  useEffect(() => {
+  // RainbowKit/wagmi 的 walletClient 实际是包装后的 window.ethereum
+  const walletClient = useMemo<EthereumProvider | null>(() => {
+    if (wagmiWalletClient?.transport) {
+      const transport = wagmiWalletClient.transport as { value?: unknown };
+      if (transport?.value && typeof (transport.value as EthereumProvider).request === "function") {
+        return transport.value as EthereumProvider;
+      }
+      return wagmiWalletClient as unknown as EthereumProvider;
+    }
+
     if (typeof window === "undefined") {
-      return;
+      return null;
     }
+    return ((window as typeof window & { ethereum?: EthereumProvider }).ethereum ?? null) as
+      | EthereumProvider
+      | null;
+  }, [wagmiWalletClient]);
 
-    const { ethereum } = window as typeof window & { ethereum?: EthereumProvider };
-    if (!ethereum) {
-      return;
-    }
-
-    setWalletClient(ethereum);
-
-    let mounted = true;
-
-    // 初次加载时主动查询当前连接账户
-    const syncAccounts = async () => {
-      if (!ethereum.request) return;
-      try {
-        const accounts = (await ethereum.request({
-          method: "eth_accounts",
-        })) as string[] | undefined;
-        if (mounted) {
-          setConnectedAddress(accounts?.[0] ?? null);
-        }
-      } catch {
-        if (mounted) {
-          setConnectedAddress(null);
-        }
-      }
-    };
-
-    // 账户变化事件直接更新地址
-    const handleAccountsChanged = (accounts: string[] = []) => {
-      if (mounted) {
-        setConnectedAddress(accounts[0] ?? null);
-      }
-    };
-
-    // 断开连接时清空地址和 provider
-    const handleDisconnect = () => {
-      if (mounted) {
-        setConnectedAddress(null);
-        setWalletClient(null);
-      }
-    };
-
-    ethereum.on?.("accountsChanged", handleAccountsChanged);
-    ethereum.on?.("disconnect", handleDisconnect);
-    syncAccounts();
-
-    return () => {
-      mounted = false;
-      ethereum.removeListener?.("accountsChanged", handleAccountsChanged);
-      ethereum.removeListener?.("disconnect", handleDisconnect);
-    };
-  }, []);
+  const connectedAddress = wagmiAddress ?? null;
 
   // 链上基础信息：blockNumber、gasPrice、更新时间
   const {

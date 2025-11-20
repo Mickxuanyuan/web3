@@ -5,4 +5,4 @@ import ABI from "../abi/OnChainLogger.json";
 export const provider = new ethers.JsonRpcProvider(RPC_URL);
 
 export const getContract = (signer?: Signer) =>
-  new ethers.Contract(CONTRACT_ADDRESS, ABI, signer || provider);
+  new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
