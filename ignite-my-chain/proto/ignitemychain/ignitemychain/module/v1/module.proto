@@ -1,0 +1,15 @@
+syntax = "proto3";
+package ignitemychain.ignitemychain.module.v1;
+
+import "cosmos/app/v1alpha1/module.proto";
+
+option go_package = "ignite-my-chain/x/ignitemychain/types";
+
+// Module is the config object for the module.
+message Module {
+  option (cosmos.app.v1alpha1.module) = {go_import: "ignite-my-chain/x/ignitemychain"};
+
+  // authority defines the custom module authority.
+  // If not set, defaults to the governance module.
+  string authority = 1;
+}

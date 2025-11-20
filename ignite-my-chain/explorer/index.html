@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ignite My Chain – Mini Explorer</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      margin: 0;
+      padding: 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    header {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    section {
+      border: 1px solid rgba(128, 128, 128, 0.4);
+      border-radius: 8px;
+      padding: 1rem;
+    }
+
+    h1, h2 {
+      margin: 0 0 0.5rem 0;
+    }
+
+    button {
+      cursor: pointer;
+      padding: 0.4rem 1rem;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      font-weight: 600;
+    }
+
+    button:disabled {
+      cursor: wait;
+      opacity: 0.6;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 0.6rem;
+    }
+
+    .card {
+      padding: 0.7rem;
+      border-radius: 6px;
+      background: rgba(128, 128, 128, 0.1);
+    }
+
+    .mono {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      word-break: break-all;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    td, th {
+      padding: 0.35rem 0.5rem;
+      border-bottom: 1px solid rgba(128, 128, 128, 0.3);
+      text-align: left;
+      font-size: 0.95rem;
+    }
+
+    .error {
+      color: #ff4d4f;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Ignite My Chain – Mini Explorer</h1>
+    <p>Talks directly to your local node. Keep the chain running and refresh to pull fresh data.</p>
+    <div>
+      <strong>Endpoints</strong>:
+      <span class="mono">RPC http://0.0.0.0:26657</span>,
+      <span class="mono">REST http://0.0.0.0:1317</span>,
+      <span class="mono">Faucet http://0.0.0.0:4500</span>
+    </div>
+    <button id="refresh">Refresh All</button>
+  </header>
+
+  <section>
+    <h2>Network Status</h2>
+    <div id="status" class="grid"></div>
+  </section>
+
+  <section>
+    <h2>Latest Block</h2>
+    <div class="grid" id="latest-block"></div>
+  </section>
+
+  <section>
+    <h2>Block Lookup</h2>
+    <form id="block-form">
+      <label>
+        Height:
+        <input id="block-height" type="number" min="1" required />
+      </label>
+      <button type="submit">Fetch Block</button>
+      <span id="block-error" class="error"></span>
+    </form>
+    <div id="block-result" class="grid" style="margin-top: 0.8rem;"></div>
+  </section>
+
+  <section>
+    <h2>Accounts (first 50)</h2>
+    <div id="accounts-status"></div>
+    <table>
+      <thead>
+        <tr>
+          <th>Address</th>
+          <th>Type</th>
+        </tr>
+      </thead>
+      <tbody id="accounts"></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Faucet</h2>
+    <p>Hit the faucet REST API directly:</p>
+    <pre class="mono">curl -X POST http://0.0.0.0:4500/credit --data '{"address":"cosmos1..."}'</pre>
+  </section>
+
+  <script>
+    const ENDPOINTS = {
+      rpc: "http://0.0.0.0:26657",
+      rest: "http://0.0.0.0:1317",
+    };
+
+    async function fetchJSON(url) {
+      const res = await fetch(url);
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`${res.status} – ${text}`);
+      }
+      return res.json();
+    }
+
+    function asCard(label, value) {
+      return `<div class="card"><strong>${label}</strong><div>${value ?? "—"}</div></div>`;
+    }
+
+    async function loadStatus() {
+      const statusContainer = document.getElementById("status");
+      statusContainer.innerHTML = "Loading…";
+      try {
+        const data = await fetchJSON(`${ENDPOINTS.rpc}/status`);
+        const info = data.result?.sync_info || {};
+        statusContainer.innerHTML = [
+          asCard("Chain ID", data.result?.node_info?.network),
+          asCard("Latest Block", info.latest_block_height),
+          asCard("Latest Time", info.latest_block_time),
+          asCard("Catching Up", info.catching_up ? "Yes" : "No"),
+        ].join("");
+      } catch (err) {
+        statusContainer.innerHTML = `<span class="error">${err.message}</span>`;
+      }
+    }
+
+    async function loadLatestBlock() {
+      const blockContainer = document.getElementById("latest-block");
+      blockContainer.innerHTML = "Loading…";
+      try {
+        const data = await fetchJSON(`${ENDPOINTS.rpc}/block`);
+        const block = data.result?.block;
+        const header = block?.header || {};
+        blockContainer.innerHTML = [
+          asCard("Height", header.height),
+          asCard("Block Hash", `<span class="mono">${data.result?.block_id?.hash ?? ""}</span>`),
+          asCard("Time", header.time),
+          asCard("Txs", block?.data?.txs?.length ?? 0),
+          asCard("Proposer", `<span class="mono">${header.proposer_address ?? ""}</span>`),
+        ].join("");
+      } catch (err) {
+        blockContainer.innerHTML = `<span class="error">${err.message}</span>`;
+      }
+    }
+
+    async function loadAccounts() {
+      const tableBody = document.getElementById("accounts");
+      const status = document.getElementById("accounts-status");
+      status.textContent = "Loading…";
+      tableBody.innerHTML = "";
+      try {
+        const data = await fetchJSON(`${ENDPOINTS.rest}/cosmos/auth/v1beta1/accounts?pagination.limit=50`);
+        const rows = (data.accounts || []).map((acc) => {
+          const type = acc["@type"]?.split(".").pop() ?? "Unknown";
+          return `<tr>
+            <td class="mono">${acc.address ?? acc.base_vesting_account?.base_account?.address ?? "—"}</td>
+            <td>${type}</td>
+          </tr>`;
+        });
+        tableBody.innerHTML = rows.join("") || "<tr><td colspan='2'>No accounts</td></tr>";
+        status.textContent = `Fetched ${rows.length} account(s).`;
+      } catch (err) {
+        status.innerHTML = `<span class="error">${err.message}</span>`;
+      }
+    }
+
+    async function lookupBlock(height) {
+      const result = document.getElementById("block-result");
+      const error = document.getElementById("block-error");
+      result.innerHTML = "";
+      error.textContent = "";
+      try {
+        const data = await fetchJSON(`${ENDPOINTS.rpc}/block?height=${height}`);
+        const block = data.result?.block;
+        const header = block?.header || {};
+        result.innerHTML = [
+          asCard("Height", header.height),
+          asCard("Time", header.time),
+          asCard("Hash", `<span class="mono">${data.result?.block_id?.hash}</span>`),
+          asCard("Tx Count", block?.data?.txs?.length ?? 0),
+        ].join("");
+      } catch (err) {
+        error.textContent = err.message;
+      }
+    }
+
+    function attachEvents() {
+      document.getElementById("refresh").addEventListener("click", () => {
+        loadAll();
+      });
+
+      document.getElementById("block-form").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const height = document.getElementById("block-height").value;
+        if (height) {
+          lookupBlock(height);
+        }
+      });
+    }
+
+    function loadAll() {
+      loadStatus();
+      loadLatestBlock();
+      loadAccounts();
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      attachEvents();
+      loadAll();
+    });
+  </script>
+</body>
+</html>
