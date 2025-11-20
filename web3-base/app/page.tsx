@@ -1,111 +1,148 @@
 "use client";
 
+// 引入 React 钩子与 RainbowKit 连接按钮
 import { useCallback, useEffect, useState } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
+// ethers 负责链上请求与数据格式化
+import { Eip1193Provider, JsonRpcProvider, formatEther } from "ethers";
+// 自定义 store 钩子封装了所有异步读取与写入逻辑
 import {
-  JsonRpcProvider,
-  TransactionResponse,
-  formatEther,
-  formatUnits,
-} from "ethers";
+  formatTimestamp,
+  useBalanceLookup,
+  useChainData,
+  useLogWriter,
+  useLogs,
+  useTransactionLookup,
+} from "@/app/store/useWeb3Store";
+import { RPC_URL } from "@/lib/config";
 
-const FALLBACK_RPC_URL = "https://bsc-mainnet.infura.io/v3/a3c4ce2452824fad9e0af7bbc086bb9f";
-const rpcUrl = FALLBACK_RPC_URL
-const provider = new JsonRpcProvider(rpcUrl);
+// 统一封装 window.ethereum 的事件类型，便于在 React 中监听
+type EthereumProvider = Eip1193Provider & {
+  on?: (event: string, listener: (...args: unknown[]) => void) => void;
+  removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
+};
+
+const fallbackProvider = new JsonRpcProvider(RPC_URL);
 
 export default function Home() {
-  const [blockNumber, setBlockNumber] = useState<number | null>(null);
-  const [gasPrice, setGasPrice] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [txHash, setTxHash] = useState("");
-  const [txLoading, setTxLoading] = useState(false);
-  const [txError, setTxError] = useState<string | null>(null);
-  const [txDetails, setTxDetails] = useState<TransactionResponse | null>(null);
-  const [address, setAddress] = useState("");
-  const [balance, setBalance] = useState<string | null>(null);
-  const [balanceLoading, setBalanceLoading] = useState(false);
-  const [balanceError, setBalanceError] = useState<string | null>(null);
+  // connectedAddress 用于控制写日志区域以及 UI 展示
+  const [connectedAddress, setConnectedAddress] = useState<string | null>(null);
+  // walletClient 直接持有浏览器注入的 EIP-1193 provider 供 ethers 使用
+  const [walletClient, setWalletClient] = useState<EthereumProvider | null>(null);
 
-  const readChainData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      const [latestBlockNumber, feeData] = await Promise.all([
-        provider.getBlockNumber(),
-        provider.getFeeData(),
-      ]);
-
-      setBlockNumber(latestBlockNumber);
-      if (feeData.gasPrice) {
-        setGasPrice(Number(formatUnits(feeData.gasPrice, "gwei")).toFixed(2));
-      }
-      setLastUpdated(
-        new Date().toISOString()
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "链上数据读取失败");
-    } finally {
-      setLoading(false);
+  // 在客户端挂载时读取 window.ethereum，并监听账户/断开事件
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
     }
+
+    const { ethereum } = window as typeof window & { ethereum?: EthereumProvider };
+    if (!ethereum) {
+      return;
+    }
+
+    setWalletClient(ethereum);
+
+    let mounted = true;
+
+    // 初次加载时主动查询当前连接账户
+    const syncAccounts = async () => {
+      if (!ethereum.request) return;
+      try {
+        const accounts = (await ethereum.request({
+          method: "eth_accounts",
+        })) as string[] | undefined;
+        if (mounted) {
+          setConnectedAddress(accounts?.[0] ?? null);
+        }
+      } catch {
+        if (mounted) {
+          setConnectedAddress(null);
+        }
+      }
+    };
+
+    // 账户变化事件直接更新地址
+    const handleAccountsChanged = (accounts: string[] = []) => {
+      if (mounted) {
+        setConnectedAddress(accounts[0] ?? null);
+      }
+    };
+
+    // 断开连接时清空地址和 provider
+    const handleDisconnect = () => {
+      if (mounted) {
+        setConnectedAddress(null);
+        setWalletClient(null);
+      }
+    };
+
+    ethereum.on?.("accountsChanged", handleAccountsChanged);
+    ethereum.on?.("disconnect", handleDisconnect);
+    syncAccounts();
+
+    return () => {
+      mounted = false;
+      ethereum.removeListener?.("accountsChanged", handleAccountsChanged);
+      ethereum.removeListener?.("disconnect", handleDisconnect);
+    };
   }, []);
 
-  useEffect(() => {
-    readChainData();
-  }, [readChainData]);
+  // 链上基础信息：blockNumber、gasPrice、更新时间
+  const {
+    blockNumber,
+    gasPrice,
+    lastUpdated,
+    loading,
+    error,
+    refresh: readChainData,
+  } = useChainData(fallbackProvider);
 
-  const fetchTransaction = useCallback(async () => {
-    if (!txHash.trim()) {
-      setTxError("请输入交易 hash");
-      setTxDetails(null);
-      return;
-    }
+  // 地址余额查询所需状态与方法
+  const {
+    address,
+    setAddress,
+    balance,
+    balanceLoading,
+    balanceError,
+    fetchBalance,
+  } = useBalanceLookup(fallbackProvider);
 
-    setTxLoading(true);
-    setTxError(null);
-    setTxDetails(null);
+  // 交易查询相关输入与结果
+  const {
+    txHash,
+    setTxHash,
+    txDetails,
+    txLoading,
+    txError,
+    fetchTransaction,
+  } = useTransactionLookup(fallbackProvider);
 
-    try {
-      const tx = await provider.getTransaction(txHash.trim());
+  // 日志查询逻辑，负责从 The Graph 拉取最新日志
+  const { logs, logsLoading, logsError, refresh: refreshLogs } = useLogs();
 
-      if (!tx) {
-        setTxError("未查询到交易，请检查 hash");
-        return;
-      }
+  // 写日志成功后多等 2 秒再刷新 The Graph，避免区块尚未同步
+  const refreshLogsWithDelay = useCallback(() => {
+    setTimeout(() => {
+      refreshLogs();
+    }, 2000);
+  }, [refreshLogs]);
 
-      setTxDetails(tx);
-    } catch (err) {
-      setTxError(err instanceof Error ? err.message : "查询交易失败");
-    } finally {
-      setTxLoading(false);
-    }
-  }, [txHash]);
-
-  const fetchBalance = useCallback(async () => {
-    if (!address.trim()) {
-      setBalanceError("请输入地址");
-      setBalance(null);
-      return;
-    }
-
-    setBalanceLoading(true);
-    setBalanceError(null);
-    setBalance(null);
-
-    try {
-      const result = await provider.getBalance(address.trim());
-      setBalance(`${formatEther(result)} BNB`);
-    } catch (err) {
-      setBalanceError(err instanceof Error ? err.message : "查询余额失败");
-    } finally {
-      setBalanceLoading(false);
-    }
-  }, [address]);
+  // 写日志区表单状态、错误提示以及提交方法
+  const {
+    logTag,
+    setLogTag,
+    logContent,
+    setLogContent,
+    logLoading,
+    logError,
+    logSuccess,
+    writeLog,
+  } = useLogWriter(walletClient, refreshLogsWithDelay);
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-6 p-6">
+      {/* 顶部区域：简介与钱包连接按钮 */}
       <section className="flex flex-col gap-4 rounded-2xl border border-neutral-200 bg-white/60 p-6 shadow-sm backdrop-blur dark:border-neutral-800 dark:bg-neutral-900/60">
         <div>
           <h1 className="text-2xl font-semibold text-neutral-900 dark:text-white">
@@ -120,6 +157,7 @@ export default function Home() {
         </div>
       </section>
 
+      {/* 地址余额查询：输入任意地址后读取 BNB 余额 */}
       <section className="rounded-2xl border border-neutral-200 bg-white/80 p-6 shadow-sm backdrop-blur dark:border-neutral-800 dark:bg-neutral-900/70">
         <h2 className="text-xl font-semibold text-neutral-900 dark:text-white">
           地址余额查询
@@ -158,15 +196,13 @@ export default function Home() {
         )}
       </section>
 
+      {/* 链上状态：展示区块高度、Gas 与最近更新时间 */}
       <section className="rounded-2xl border border-neutral-200 bg-white/80 p-6 shadow-sm backdrop-blur dark:border-neutral-800 dark:bg-neutral-900/70">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-xl font-semibold text-neutral-900 dark:text-white">
               链上状态（ethers.js）
             </h2>
-            <p className="text-xs text-neutral-500">
-              RPC: {rpcUrl.replace(/^https?:\/\//, "")}
-            </p>
           </div>
           <button
             type="button"
@@ -206,6 +242,7 @@ export default function Home() {
         </dl>
       </section>
 
+      {/* 交易查询：根据交易哈希解析基础信息 */}
       <section className="rounded-2xl border border-neutral-200 bg-white/80 p-6 shadow-sm backdrop-blur dark:border-neutral-800 dark:bg-neutral-900/70">
         <h2 className="text-xl font-semibold text-neutral-900 dark:text-white">
           交易查询
@@ -270,6 +307,133 @@ export default function Home() {
               </dd>
             </div>
           </dl>
+        )}
+      </section>
+
+      {/* 写日志：钱包签名调用合约 log 函数 */}
+      <section className="rounded-2xl border border-neutral-200 bg-white/80 p-6 shadow-sm backdrop-blur dark:border-neutral-800 dark:bg-neutral-900/70">
+        <h2 className="text-xl font-semibold text-neutral-900 dark:text-white">
+          写日志（OnChainLogger）
+        </h2>
+        <p className="mt-1 text-sm text-neutral-500">
+          连接钱包后，可以调用合约的 log 函数写入链上日志。
+        </p>
+
+        {!connectedAddress && (
+          <p className="mt-4 rounded-md bg-yellow-50 px-3 py-2 text-sm text-yellow-600 dark:bg-yellow-500/10 dark:text-yellow-400">
+            请先连接钱包
+          </p>
+        )}
+
+        <div className="mt-4 flex flex-col gap-3">
+          <input
+            value={logTag}
+            onChange={(event) => setLogTag(event.target.value)}
+            placeholder="标签（例如：user-action）"
+            disabled={!connectedAddress || logLoading}
+            className="rounded-xl border border-neutral-300 px-4 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900"
+          />
+          <textarea
+            value={logContent}
+            onChange={(event) => setLogContent(event.target.value)}
+            placeholder="日志内容"
+            disabled={!connectedAddress || logLoading}
+            rows={4}
+            className="rounded-xl border border-neutral-300 px-4 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900"
+          />
+          <button
+            type="button"
+            onClick={writeLog}
+            disabled={!connectedAddress || logLoading || !logTag.trim() || !logContent.trim()}
+            className="rounded-xl bg-blue-600 px-6 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {logLoading ? "写入中..." : "写入日志"}
+          </button>
+        </div>
+
+        {logError && (
+          <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-600 dark:bg-red-500/10 dark:text-red-400">
+            {logError}
+          </p>
+        )}
+
+        {logSuccess && (
+          <p className="mt-3 rounded-md bg-green-50 px-3 py-2 text-sm text-green-600 dark:bg-green-500/10 dark:text-green-400">
+            {logSuccess}
+          </p>
+        )}
+      </section>
+
+      {/* 日志列表：通过 The Graph 查询最近 20 条记录 */}
+      <section className="rounded-2xl border border-neutral-200 bg-white/80 p-6 shadow-sm backdrop-blur dark:border-neutral-800 dark:bg-neutral-900/70">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold text-neutral-900 dark:text-white">
+              日志列表（The Graph）
+            </h2>
+            <p className="mt-1 text-sm text-neutral-500">
+              通过 The Graph 查询链上日志数据。
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={refreshLogs}
+            disabled={logsLoading}
+            className="rounded-full border border-blue-500 px-4 py-2 text-sm font-medium text-blue-600 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-blue-400 dark:text-blue-300 dark:hover:bg-blue-400/10"
+          >
+            {logsLoading ? "加载中..." : "刷新"}
+          </button>
+        </div>
+
+        {logsError && (
+          <p className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-600 dark:bg-red-500/10 dark:text-red-400">
+            {logsError}
+          </p>
+        )}
+
+        {logsLoading && logs.length === 0 && (
+          <p className="mt-4 text-center text-sm text-neutral-500">
+            加载中...
+          </p>
+        )}
+
+        {!logsLoading && logs.length === 0 && !logsError && (
+          <p className="mt-4 text-center text-sm text-neutral-500">
+            暂无日志数据
+          </p>
+        )}
+
+        {logs.length > 0 && (
+          <div className="mt-4 space-y-3">
+            {logs.map((log) => (
+              <div
+                key={log.id}
+                className="rounded-lg border border-neutral-200 bg-neutral-50/70 p-4 dark:border-neutral-700 dark:bg-neutral-800/70"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="mb-2">
+                      <span className="inline-block rounded-full bg-blue-100 px-2 py-1 text-xs font-medium text-blue-700 dark:bg-blue-500/20 dark:text-blue-300">
+                        {log.tag}
+                      </span>
+                    </div>
+                    <p className="text-sm text-neutral-900 dark:text-white">
+                      {log.content}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-3 text-xs text-neutral-500">
+                      <span>发送者: <span className="font-mono">{log.sender}</span></span>
+                      <span>时间: {formatTimestamp(log.timestamp)}</span>
+                      {log.transactionHash && (
+                        <span className="break-all">
+                          Tx: <span className="font-mono">{log.transactionHash}</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </section>
     </main>
