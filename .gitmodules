@@ -10,3 +10,7 @@
 [submodule "web3-university/web3-university-constract/lib/openzeppelin-contracts-upgradeable"]
 	path = web3-university/web3-university-constract/lib/openzeppelin-contracts-upgradeable
 	url = https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable
+
+[submodule "web3-university/web3-university-constract/lib/openzeppelin-contracts"]
+	path = web3-university/web3-university-constract/lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts

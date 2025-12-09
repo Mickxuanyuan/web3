@@ -1,0 +1,26 @@
+# Dependencies
+node_modules
+
+# Build outputs
+dist
+build
+coverage
+docs/jest-stare
+docs/jest-coverage
+
+# Cache
+.cache
+.next
+*.log
+
+# Generated files
+*.min.js
+*.bundle.js
+
+# Public assets
+public
+
+# Other
+geckodriver
+yarn.lock
+package-lock.json

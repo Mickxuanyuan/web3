@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(yarn biome check:*)",
+      "Bash(yarn biome migrate:*)",
+      "Bash(mkdir:*)",
+      "Bash(cat:*)",
+      "Bash(tree:*)",
+      "Bash(npm run client:prod:*)",
+      "Bash(pkill:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

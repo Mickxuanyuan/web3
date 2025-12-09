@@ -4,6 +4,7 @@ pragma solidity ^0.8.23;
 /// @title RedPacket - 简单链上红包
 /// @notice 创建者锁定 ETH，指定份数，人人平均领取。
 contract RedPacket {
+    // 结构体定义
     struct Packet {
         address creator; // 创建人
         uint256 totalAmount; // 锁定的初始 ETH
